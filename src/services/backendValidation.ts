@@ -103,3 +103,4 @@ export function validateBackendSubmission(data: {
     statusCode: isValid ? 200 : 422,
   };
 }
+

@@ -107,6 +107,7 @@ export const UnifiedAppFlow: React.FC = () => {
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   // Maximum date allowed for birthdate is today (YYYY-MM-DD in local time)
   const getTodayDateString = () => {
@@ -124,15 +125,152 @@ export const UnifiedAppFlow: React.FC = () => {
     return /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/.test(val.trim());
   };
 
-  const handleFieldChange = (field: keyof UnifiedFormData, value: string | boolean) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      });
+  // Instant field-level validation for immediate inline error feedback
+  const getFieldError = (
+    field: keyof UnifiedFormData,
+    val: string | boolean,
+    currentData: UnifiedFormData = formData
+  ): string | undefined => {
+    const value = typeof val === 'string' ? val.trim() : val;
+
+    switch (field) {
+      case 'loginEmail':
+        if (!value) return 'Email address is required.';
+        if (!isValidEmail(value as string)) {
+          return 'Please enter a valid email address with a domain (e.g. alex@example.com). Names like "Richie" or numbers like "123" are not valid.';
+        }
+        return undefined;
+
+      case 'loginPassword':
+        if (!value) return 'Password is required.';
+        return undefined;
+
+      case 'fullName':
+        if (!value) return 'Please enter your first and last name.';
+        if ((value as string).length < 2) return 'Full name must be at least 2 characters.';
+        return undefined;
+
+      case 'email':
+        if (!value) return 'Email address is required.';
+        if (!isValidEmail(value as string)) {
+          return 'Please enter a valid email address with a domain (e.g. alex@example.com). Names like "Richie" or numbers like "123" are not accepted.';
+        }
+        return undefined;
+
+      case 'password':
+        if (!value) return 'Password is required.';
+        if ((value as string).length < 8) return 'Password must be at least 8 characters long.';
+        if (!/\d/.test(value as string)) return 'Password must include at least one number.';
+        return undefined;
+
+      case 'confirmPassword':
+        if (!value) return 'Please re-type your password.';
+        if (value !== currentData.password) return 'Passwords do not match. Please re-type your password.';
+        return undefined;
+
+      case 'currentSchoolOrWork':
+        if (!value) return 'Please enter your current school or company name.';
+        return undefined;
+
+      case 'dateOfBirth':
+        if (!value) return 'Please select your date of birth.';
+        if ((value as string) > todayDate) return 'Birthdate cannot be in the future. Today is the latest allowed date.';
+        if (new Date(value as string).getFullYear() < 1900) return 'Please enter a valid birth year after 1900.';
+        return undefined;
+
+      case 'phone':
+        if (!value) return 'Phone number is required.';
+        if (!/^\d+$/.test(value as string)) return 'Phone number must contain numbers only.';
+        if ((value as string).length < 10 || (value as string).length > 11) {
+          return `Phone number must be 10 or 11 digits (currently ${(value as string).length}).`;
+        }
+        return undefined;
+
+      case 'address':
+        if (!value) return 'Please enter your home address.';
+        return undefined;
+
+      case 'emergencyContactName':
+        if (!value) return 'Please enter an emergency contact name.';
+        return undefined;
+
+      case 'emergencyRelation':
+        if (!value) return 'Please select a relationship.';
+        return undefined;
+
+      case 'emergencyPhone':
+        if (!value) return 'Emergency contact phone number is required.';
+        if (!/^\d+$/.test(value as string)) return 'Emergency phone must contain numbers only.';
+        if ((value as string).length < 10 || (value as string).length > 11) {
+          return `Emergency phone must be 10 or 11 digits (currently ${(value as string).length}).`;
+        }
+        return undefined;
+
+      case 'degreeType':
+        if (!value) return 'Please select a degree type.';
+        return undefined;
+
+      case 'department':
+        if (!value) return 'Please select a school or department.';
+        return undefined;
+
+      case 'major':
+        if (!value) return 'Please select a major.';
+        return undefined;
+
+      case 'startTerm':
+        if (!value) return 'Please select when you want to start.';
+        return undefined;
+
+      case 'classFormat':
+        if (!value) return 'Please select how you will attend classes.';
+        return undefined;
+
+      case 'confirmAccuracy':
+        if (!value) return 'Please check the box to confirm your information is true.';
+        return undefined;
+
+      default:
+        return undefined;
     }
+  };
+
+  // Blur handler: triggers validation when leaving a field
+  const handleBlur = (field: keyof UnifiedFormData) => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    const err = getFieldError(field, formData[field]);
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (err) next[field] = err;
+      else delete next[field];
+      return next;
+    });
+  };
+
+  // Field change handler: provides live error handling while typing
+  const handleFieldChange = (field: keyof UnifiedFormData, value: string | boolean) => {
+    const updated = { ...formData, [field]: value };
+    setFormData(updated);
+    setTouched((prev) => ({ ...prev, [field]: true }));
+
+    const err = getFieldError(field, value, updated);
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (err) {
+        next[field] = err;
+      } else {
+        delete next[field];
+      }
+
+      // Live validation for confirmPassword if password changes
+      if (field === 'password' && (touched.confirmPassword || formData.confirmPassword)) {
+        const confirmErr = getFieldError('confirmPassword', formData.confirmPassword, updated);
+        if (confirmErr) next.confirmPassword = confirmErr;
+        else delete next.confirmPassword;
+      }
+
+      return next;
+    });
   };
 
   // Check validity for step 1 (Login)
@@ -172,130 +310,75 @@ export const UnifiedAppFlow: React.FC = () => {
     Boolean(formData.startTerm) &&
     Boolean(formData.classFormat);
 
-  // Phone input handler: accepts numbers only (strips letters & invalid characters)
+  // Phone input handler: accepts numbers only (strips letters & invalid characters) and shows real-time error
   const handlePhoneChange = (field: 'phone' | 'emergencyPhone', rawValue: string) => {
+    const hasInvalidChars = /\D/.test(rawValue);
     const digitsOnly = rawValue.replace(/\D/g, '').slice(0, 11);
-    handleFieldChange(field, digitsOnly);
+    const updated = { ...formData, [field]: digitsOnly };
+    setFormData(updated);
+    setTouched((prev) => ({ ...prev, [field]: true }));
 
-    if (digitsOnly.length > 0 && digitsOnly.length < 10) {
-      setErrors((prev) => ({
-        ...prev,
-        [field]: `Phone number must be 10 or 11 digits (currently ${digitsOnly.length}).`,
-      }));
-    } else {
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      });
+    let err = getFieldError(field, digitsOnly, updated);
+    if (!err && hasInvalidChars) {
+      err = 'Phone number accepts numbers only. Letters and symbols were removed.';
+    } else if (hasInvalidChars && digitsOnly.length > 0 && digitsOnly.length < 10) {
+      err = `Numbers only. Must be 10 or 11 digits (currently ${digitsOnly.length}).`;
+    } else if (hasInvalidChars && digitsOnly.length === 0) {
+      err = 'Phone number accepts numbers only. Letters are not allowed.';
     }
+
+    setErrors((prev) => {
+      const next = { ...prev };
+      if (err) next[field] = err;
+      else delete next[field];
+      return next;
+    });
   };
 
-  // Birthdate input handler: prevents future dates and validates year
+  // Birthdate input handler: prevents future dates and shows real-time error
   const handleDobChange = (val: string) => {
+    setTouched((prev) => ({ ...prev, dateOfBirth: true }));
     handleFieldChange('dateOfBirth', val);
-    if (val && val > todayDate) {
-      setErrors((prev) => ({
-        ...prev,
-        dateOfBirth: 'Birthdate cannot be in the future. Today is the latest allowed date.',
-      }));
-    } else if (val && new Date(val).getFullYear() < 1900) {
-      setErrors((prev) => ({
-        ...prev,
-        dateOfBirth: 'Please enter a valid birth year after 1900.',
-      }));
-    } else {
-      setErrors((prev) => {
-        const next = { ...prev };
-        delete next.dateOfBirth;
-        return next;
-      });
-    }
   };
 
-  // Step-by-Step Validation with user-friendly error messages
+  // Step-by-Step Validation with comprehensive error messages
   const validateStage = (currentStage: FlowStage): boolean => {
     const errs: Record<string, string> = {};
+    const markTouched: Record<string, boolean> = {};
+
+    const checkField = (field: keyof UnifiedFormData) => {
+      markTouched[field] = true;
+      const err = getFieldError(field, formData[field]);
+      if (err) errs[field] = err;
+    };
 
     if (currentStage === 'login') {
-      if (!formData.loginEmail.trim()) {
-        errs.loginEmail = 'Email address is required.';
-      } else if (!isValidEmail(formData.loginEmail)) {
-        errs.loginEmail =
-          'Please enter a full email address with a domain (e.g. alex@example.com). Names like "Richie" or numbers like "123" are not valid.';
-      }
-      if (!formData.loginPassword) {
-        errs.loginPassword = 'Password is required.';
-      }
+      checkField('loginEmail');
+      checkField('loginPassword');
     } else if (currentStage === 'registration') {
-      if (!formData.fullName.trim() || formData.fullName.trim().length < 2) {
-        errs.fullName = 'Please enter your first and last name.';
-      }
-      if (!formData.email.trim()) {
-        errs.email = 'Email address is required.';
-      } else if (!isValidEmail(formData.email)) {
-        errs.email =
-          'Please enter a valid email address with a domain (e.g. alex@example.com). Just a name like "Richie" or number like "123" is not accepted.';
-      }
-      if (!formData.password || formData.password.length < 8) {
-        errs.password = 'Password must be at least 8 characters long.';
-      } else if (!/\d/.test(formData.password)) {
-        errs.password = 'Password must include at least one number.';
-      }
-      if (formData.password !== formData.confirmPassword) {
-        errs.confirmPassword = 'Passwords do not match. Please re-type your password.';
-      }
-      if (!formData.currentSchoolOrWork.trim()) {
-        errs.currentSchoolOrWork = 'Please enter your current school or company name.';
-      }
+      checkField('fullName');
+      checkField('email');
+      checkField('password');
+      checkField('confirmPassword');
+      checkField('currentSchoolOrWork');
     } else if (currentStage === 'user_info') {
-      if (!formData.dateOfBirth) {
-        errs.dateOfBirth = 'Please select your date of birth.';
-      } else if (formData.dateOfBirth > todayDate) {
-        errs.dateOfBirth = 'Birthdate cannot be in the future. Today is the latest allowed date.';
-      } else if (new Date(formData.dateOfBirth).getFullYear() < 1900) {
-        errs.dateOfBirth = 'Please enter a valid birth year after 1900.';
-      }
-
-      if (!formData.phone.trim()) {
-        errs.phone = 'Phone number is required.';
-      } else if (!/^\d+$/.test(formData.phone.trim())) {
-        errs.phone = 'Phone number must contain numbers only.';
-      } else if (formData.phone.trim().length < 10 || formData.phone.trim().length > 11) {
-        errs.phone = `Phone number must be 10 or 11 digits (currently ${formData.phone.trim().length}).`;
-      }
-
-      if (!formData.address.trim()) {
-        errs.address = 'Please enter your home address.';
-      }
-
-      if (!formData.emergencyContactName.trim()) {
-        errs.emergencyContactName = 'Please enter an emergency contact name.';
-      }
-
-      if (!formData.emergencyRelation) {
-        errs.emergencyRelation = 'Please select a relationship.';
-      }
-
-      if (!formData.emergencyPhone.trim()) {
-        errs.emergencyPhone = 'Emergency contact phone number is required.';
-      } else if (!/^\d+$/.test(formData.emergencyPhone.trim())) {
-        errs.emergencyPhone = 'Emergency contact phone must contain numbers only.';
-      } else if (formData.emergencyPhone.trim().length < 10 || formData.emergencyPhone.trim().length > 11) {
-        errs.emergencyPhone = `Emergency phone must be 10 or 11 digits (currently ${formData.emergencyPhone.trim().length}).`;
-      }
+      checkField('dateOfBirth');
+      checkField('phone');
+      checkField('address');
+      checkField('emergencyContactName');
+      checkField('emergencyRelation');
+      checkField('emergencyPhone');
     } else if (currentStage === 'request_info') {
-      if (!formData.degreeType) errs.degreeType = 'Please select a degree type.';
-      if (!formData.department) errs.department = 'Please select a school or department.';
-      if (!formData.major) errs.major = 'Please select a major.';
-      if (!formData.startTerm) errs.startTerm = 'Please select when you want to start.';
-      if (!formData.classFormat) errs.classFormat = 'Please select how you will attend classes.';
+      checkField('degreeType');
+      checkField('department');
+      checkField('major');
+      checkField('startTerm');
+      checkField('classFormat');
     } else if (currentStage === 'review') {
-      if (!formData.confirmAccuracy) {
-        errs.confirmAccuracy = 'Please check the box to confirm your information is true.';
-      }
+      checkField('confirmAccuracy');
     }
 
+    setTouched((prev) => ({ ...prev, ...markTouched }));
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -574,6 +657,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="e.g. alex@example.com"
                 value={formData.loginEmail}
                 onChange={(e) => handleFieldChange('loginEmail', e.target.value)}
+                onBlur={() => handleBlur('loginEmail')}
                 error={errors.loginEmail}
                 helperText="Enter a full email ending with a domain like @example.com or @school.edu"
                 autoComplete="email"
@@ -586,6 +670,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="Enter your password"
                 value={formData.loginPassword}
                 onChange={(e) => handleFieldChange('loginPassword', e.target.value)}
+                onBlur={() => handleBlur('loginPassword')}
                 error={errors.loginPassword}
                 autoComplete="current-password"
               />
@@ -717,6 +802,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="e.g. Alex Morgan"
                 value={formData.fullName}
                 onChange={(e) => handleFieldChange('fullName', e.target.value)}
+                onBlur={() => handleBlur('fullName')}
                 error={errors.fullName}
                 helperText="Your first and last name"
                 autoComplete="name"
@@ -730,6 +816,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="e.g. alex@example.com"
                 value={formData.email}
                 onChange={(e) => handleFieldChange('email', e.target.value)}
+                onBlur={() => handleBlur('email')}
                 error={errors.email}
                 helperText="Must be a full email like name@example.com (names like 'Richie' or numbers like '123' are not accepted)"
                 autoComplete="email"
@@ -742,6 +829,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="At least 8 characters with a number"
                 value={formData.password}
                 onChange={(e) => handleFieldChange('password', e.target.value)}
+                onBlur={() => handleBlur('password')}
                 error={errors.password}
                 helperText="Must be at least 8 characters and include at least one number"
                 autoComplete="new-password"
@@ -754,6 +842,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="Type your password again"
                 value={formData.confirmPassword}
                 onChange={(e) => handleFieldChange('confirmPassword', e.target.value)}
+                onBlur={() => handleBlur('confirmPassword')}
                 error={errors.confirmPassword}
                 autoComplete="new-password"
               />
@@ -765,6 +854,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="e.g. Lincoln High School or Acme Corp"
                 value={formData.currentSchoolOrWork}
                 onChange={(e) => handleFieldChange('currentSchoolOrWork', e.target.value)}
+                onBlur={() => handleBlur('currentSchoolOrWork')}
                 error={errors.currentSchoolOrWork}
                 helperText="Where you currently study or work"
               />
@@ -839,6 +929,7 @@ export const UnifiedAppFlow: React.FC = () => {
                   max={todayDate}
                   value={formData.dateOfBirth}
                   onChange={(e) => handleDobChange(e.target.value)}
+                  onBlur={() => handleBlur('dateOfBirth')}
                   className={`
                     block w-full min-w-0 rounded-lg text-base sm:text-sm min-h-[44px] sm:min-h-[40px] border shadow-sm px-3.5 py-2 transition-colors
                     ${
@@ -864,6 +955,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="e.g. 5552345678 (numbers only)"
                 value={formData.phone}
                 onChange={(e) => handlePhoneChange('phone', e.target.value)}
+                onBlur={() => handleBlur('phone')}
                 error={errors.phone}
                 leftIcon={<Phone className="w-4 h-4 text-slate-400" />}
                 helperText="Numbers only • 10 or 11 digits"
@@ -876,6 +968,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 placeholder="e.g. 123 Main Street, Apt 4B, Springfield, OR"
                 value={formData.address}
                 onChange={(e) => handleFieldChange('address', e.target.value)}
+                onBlur={() => handleBlur('address')}
                 error={errors.address}
                 leftIcon={<MapPin className="w-4 h-4 text-slate-400" />}
                 helperText="Your current mailing address"
@@ -893,6 +986,7 @@ export const UnifiedAppFlow: React.FC = () => {
                     placeholder="e.g. Jane Doe"
                     value={formData.emergencyContactName}
                     onChange={(e) => handleFieldChange('emergencyContactName', e.target.value)}
+                    onBlur={() => handleBlur('emergencyContactName')}
                     error={errors.emergencyContactName}
                   />
 
@@ -903,6 +997,7 @@ export const UnifiedAppFlow: React.FC = () => {
                     <select
                       value={formData.emergencyRelation}
                       onChange={(e) => handleFieldChange('emergencyRelation', e.target.value)}
+                      onBlur={() => handleBlur('emergencyRelation')}
                       className={`block w-full min-w-0 rounded-lg border px-3.5 py-2.5 sm:py-2 text-base sm:text-sm min-h-[44px] sm:min-h-[40px] shadow-sm focus:outline-none focus:ring-1 ${
                         errors.emergencyRelation
                           ? 'border-rose-300 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-rose-500'
@@ -929,6 +1024,7 @@ export const UnifiedAppFlow: React.FC = () => {
                     placeholder="e.g. 5559876543 (numbers only)"
                     value={formData.emergencyPhone}
                     onChange={(e) => handlePhoneChange('emergencyPhone', e.target.value)}
+                    onBlur={() => handleBlur('emergencyPhone')}
                     error={errors.emergencyPhone}
                     helperText="Numbers only • 10 or 11 digits"
                   />
@@ -1002,6 +1098,7 @@ export const UnifiedAppFlow: React.FC = () => {
                   id="req-degree"
                   value={formData.degreeType}
                   onChange={(e) => handleFieldChange('degreeType', e.target.value)}
+                  onBlur={() => handleBlur('degreeType')}
                   className={`block w-full min-w-0 rounded-lg border px-3.5 py-2.5 sm:py-2 text-base sm:text-sm min-h-[44px] sm:min-h-[40px] shadow-sm focus:outline-none focus:ring-1 ${
                     errors.degreeType
                       ? 'border-rose-300 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-rose-500'
@@ -1026,6 +1123,7 @@ export const UnifiedAppFlow: React.FC = () => {
                   id="req-dept"
                   value={formData.department}
                   onChange={(e) => handleFieldChange('department', e.target.value)}
+                  onBlur={() => handleBlur('department')}
                   className={`block w-full min-w-0 rounded-lg border px-3.5 py-2.5 sm:py-2 text-base sm:text-sm min-h-[44px] sm:min-h-[40px] shadow-sm focus:outline-none focus:ring-1 ${
                     errors.department
                       ? 'border-rose-300 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-rose-500'
@@ -1051,6 +1149,7 @@ export const UnifiedAppFlow: React.FC = () => {
                   id="req-major"
                   value={formData.major}
                   onChange={(e) => handleFieldChange('major', e.target.value)}
+                  onBlur={() => handleBlur('major')}
                   className={`block w-full min-w-0 rounded-lg border px-3.5 py-2.5 sm:py-2 text-base sm:text-sm min-h-[44px] sm:min-h-[40px] shadow-sm focus:outline-none focus:ring-1 ${
                     errors.major
                       ? 'border-rose-300 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-rose-500'
@@ -1078,6 +1177,7 @@ export const UnifiedAppFlow: React.FC = () => {
                     id="req-term"
                     value={formData.startTerm}
                     onChange={(e) => handleFieldChange('startTerm', e.target.value)}
+                    onBlur={() => handleBlur('startTerm')}
                     className={`block w-full min-w-0 rounded-lg border px-3.5 py-2.5 sm:py-2 text-base sm:text-sm min-h-[44px] sm:min-h-[40px] shadow-sm focus:outline-none focus:ring-1 ${
                       errors.startTerm
                         ? 'border-rose-300 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-rose-500'
@@ -1102,6 +1202,7 @@ export const UnifiedAppFlow: React.FC = () => {
                     id="req-format"
                     value={formData.classFormat}
                     onChange={(e) => handleFieldChange('classFormat', e.target.value)}
+                    onBlur={() => handleBlur('classFormat')}
                     className={`block w-full min-w-0 rounded-lg border px-3.5 py-2.5 sm:py-2 text-base sm:text-sm min-h-[44px] sm:min-h-[40px] shadow-sm focus:outline-none focus:ring-1 ${
                       errors.classFormat
                         ? 'border-rose-300 bg-rose-50/20 text-rose-900 focus:border-rose-500 focus:ring-rose-500'
@@ -1297,6 +1398,7 @@ export const UnifiedAppFlow: React.FC = () => {
                   type="checkbox"
                   checked={formData.confirmAccuracy}
                   onChange={(e) => handleFieldChange('confirmAccuracy', e.target.checked)}
+                  onBlur={() => handleBlur('confirmAccuracy')}
                   className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 shrink-0"
                 />
                 <span className="text-xs text-slate-700 leading-relaxed">
@@ -1338,6 +1440,12 @@ export const UnifiedAppFlow: React.FC = () => {
                 Submit Application
               </Button>
             </div>
+
+            {!formData.confirmAccuracy && (
+              <p className="text-center text-[11px] text-slate-400 mt-1">
+                Please check the confirmation box above to submit your application
+              </p>
+            )}
           </div>
         )}
 
