@@ -25,6 +25,7 @@ import { PasswordInput } from '../ui/PasswordInput';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Modal } from '../ui/Modal';
+import { validateBackendSubmission } from '../../services/backendValidation';
 
 export type FlowStage =
   | 'login'
@@ -107,6 +108,16 @@ export const UnifiedAppFlow: React.FC = () => {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // Maximum date allowed for birthdate is today (YYYY-MM-DD in local time)
+  const getTodayDateString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  const todayDate = getTodayDateString();
+
   // Strict email validation: requires an '@' symbol, domain name, dot, and valid extension
   // Will strictly reject plain names like "Richie" or plain numbers like "123"
   const isValidEmail = (val: string) => {
@@ -141,6 +152,66 @@ export const UnifiedAppFlow: React.FC = () => {
     /\d/.test(formData.password) &&
     formData.password === formData.confirmPassword &&
     Boolean(formData.currentSchoolOrWork.trim());
+
+  // Check validity for step 3 (Personal Info)
+  const isUserInfoValid =
+    Boolean(formData.dateOfBirth) &&
+    formData.dateOfBirth <= todayDate &&
+    new Date(formData.dateOfBirth).getFullYear() >= 1900 &&
+    /^\d{10,11}$/.test(formData.phone.trim()) &&
+    Boolean(formData.address.trim()) &&
+    Boolean(formData.emergencyContactName.trim()) &&
+    Boolean(formData.emergencyRelation) &&
+    /^\d{10,11}$/.test(formData.emergencyPhone.trim());
+
+  // Check validity for step 4 (Request Info)
+  const isRequestInfoValid =
+    Boolean(formData.degreeType) &&
+    Boolean(formData.department) &&
+    Boolean(formData.major) &&
+    Boolean(formData.startTerm) &&
+    Boolean(formData.classFormat);
+
+  // Phone input handler: accepts numbers only (strips letters & invalid characters)
+  const handlePhoneChange = (field: 'phone' | 'emergencyPhone', rawValue: string) => {
+    const digitsOnly = rawValue.replace(/\D/g, '').slice(0, 11);
+    handleFieldChange(field, digitsOnly);
+
+    if (digitsOnly.length > 0 && digitsOnly.length < 10) {
+      setErrors((prev) => ({
+        ...prev,
+        [field]: `Phone number must be 10 or 11 digits (currently ${digitsOnly.length}).`,
+      }));
+    } else {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  };
+
+  // Birthdate input handler: prevents future dates and validates year
+  const handleDobChange = (val: string) => {
+    handleFieldChange('dateOfBirth', val);
+    if (val && val > todayDate) {
+      setErrors((prev) => ({
+        ...prev,
+        dateOfBirth: 'Birthdate cannot be in the future. Today is the latest allowed date.',
+      }));
+    } else if (val && new Date(val).getFullYear() < 1900) {
+      setErrors((prev) => ({
+        ...prev,
+        dateOfBirth: 'Please enter a valid birth year after 1900.',
+      }));
+    } else {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.dateOfBirth;
+        return next;
+      });
+    }
+  };
 
   // Step-by-Step Validation with user-friendly error messages
   const validateStage = (currentStage: FlowStage): boolean => {
@@ -180,21 +251,38 @@ export const UnifiedAppFlow: React.FC = () => {
     } else if (currentStage === 'user_info') {
       if (!formData.dateOfBirth) {
         errs.dateOfBirth = 'Please select your date of birth.';
+      } else if (formData.dateOfBirth > todayDate) {
+        errs.dateOfBirth = 'Birthdate cannot be in the future. Today is the latest allowed date.';
+      } else if (new Date(formData.dateOfBirth).getFullYear() < 1900) {
+        errs.dateOfBirth = 'Please enter a valid birth year after 1900.';
       }
-      if (!formData.phone.trim() || formData.phone.trim().length < 7) {
-        errs.phone = 'Please enter a valid phone number with area code.';
+
+      if (!formData.phone.trim()) {
+        errs.phone = 'Phone number is required.';
+      } else if (!/^\d+$/.test(formData.phone.trim())) {
+        errs.phone = 'Phone number must contain numbers only.';
+      } else if (formData.phone.trim().length < 10 || formData.phone.trim().length > 11) {
+        errs.phone = `Phone number must be 10 or 11 digits (currently ${formData.phone.trim().length}).`;
       }
+
       if (!formData.address.trim()) {
         errs.address = 'Please enter your home address.';
       }
+
       if (!formData.emergencyContactName.trim()) {
         errs.emergencyContactName = 'Please enter an emergency contact name.';
       }
-      if (!formData.emergencyPhone.trim()) {
-        errs.emergencyPhone = 'Please enter an emergency contact phone number.';
-      }
+
       if (!formData.emergencyRelation) {
         errs.emergencyRelation = 'Please select a relationship.';
+      }
+
+      if (!formData.emergencyPhone.trim()) {
+        errs.emergencyPhone = 'Emergency contact phone number is required.';
+      } else if (!/^\d+$/.test(formData.emergencyPhone.trim())) {
+        errs.emergencyPhone = 'Emergency contact phone must contain numbers only.';
+      } else if (formData.emergencyPhone.trim().length < 10 || formData.emergencyPhone.trim().length > 11) {
+        errs.emergencyPhone = `Emergency phone must be 10 or 11 digits (currently ${formData.emergencyPhone.trim().length}).`;
       }
     } else if (currentStage === 'request_info') {
       if (!formData.degreeType) errs.degreeType = 'Please select a degree type.';
@@ -278,6 +366,28 @@ export const UnifiedAppFlow: React.FC = () => {
   // Confirmation dialog submission
   const handleConfirmedSubmit = () => {
     setIsSubmitting(true);
+
+    // Apply Backend Validation to ensure data reliability on the server
+    const backendResult = validateBackendSubmission({
+      email: formData.email,
+      fullName: formData.fullName,
+      dateOfBirth: formData.dateOfBirth,
+      phone: formData.phone,
+      emergencyPhone: formData.emergencyPhone,
+      emergencyRelation: formData.emergencyRelation,
+      degreeType: formData.degreeType,
+      department: formData.department,
+      major: formData.major,
+      startTerm: formData.startTerm,
+      classFormat: formData.classFormat,
+    });
+
+    if (!backendResult.isValid) {
+      setIsSubmitting(false);
+      setIsConfirmModalOpen(false);
+      setErrors(backendResult.errors);
+      return;
+    }
 
     setTimeout(() => {
       setIsSubmitting(false);
@@ -726,8 +836,9 @@ export const UnifiedAppFlow: React.FC = () => {
                   id="user-dob"
                   type="date"
                   required
+                  max={todayDate}
                   value={formData.dateOfBirth}
-                  onChange={(e) => handleFieldChange('dateOfBirth', e.target.value)}
+                  onChange={(e) => handleDobChange(e.target.value)}
                   className={`
                     block w-full min-w-0 rounded-lg text-base sm:text-sm min-h-[44px] sm:min-h-[40px] border shadow-sm px-3.5 py-2 transition-colors
                     ${
@@ -740,7 +851,7 @@ export const UnifiedAppFlow: React.FC = () => {
                 {errors.dateOfBirth ? (
                   <p className="text-xs text-rose-600 font-medium">{errors.dateOfBirth}</p>
                 ) : (
-                  <p className="text-xs text-slate-500">Needed for official school records</p>
+                  <p className="text-xs text-slate-500">Needed for official school records (today or earlier)</p>
                 )}
               </div>
 
@@ -748,13 +859,14 @@ export const UnifiedAppFlow: React.FC = () => {
                 label="Phone Number"
                 id="user-phone"
                 type="tel"
+                inputMode="numeric"
                 required
-                placeholder="e.g. (555) 234-5678"
+                placeholder="e.g. 5552345678 (numbers only)"
                 value={formData.phone}
-                onChange={(e) => handleFieldChange('phone', e.target.value)}
+                onChange={(e) => handlePhoneChange('phone', e.target.value)}
                 error={errors.phone}
                 leftIcon={<Phone className="w-4 h-4 text-slate-400" />}
-                helperText="For important updates about your application"
+                helperText="Numbers only • 10 or 11 digits"
               />
 
               <Input
@@ -812,11 +924,13 @@ export const UnifiedAppFlow: React.FC = () => {
                   <Input
                     label="Contact Phone"
                     type="tel"
+                    inputMode="numeric"
                     required
-                    placeholder="e.g. (555) 987-6543"
+                    placeholder="e.g. 5559876543 (numbers only)"
                     value={formData.emergencyPhone}
-                    onChange={(e) => handleFieldChange('emergencyPhone', e.target.value)}
+                    onChange={(e) => handlePhoneChange('emergencyPhone', e.target.value)}
                     error={errors.emergencyPhone}
+                    helperText="Numbers only • 10 or 11 digits"
                   />
                 </div>
               </div>
@@ -837,12 +951,19 @@ export const UnifiedAppFlow: React.FC = () => {
                   type="submit"
                   variant="primary"
                   size="lg"
+                  disabled={!isUserInfoValid}
                   rightIcon={<ChevronRight className="w-4 h-4" />}
                   className="w-full sm:w-auto justify-center"
                 >
                   Next: Choose Program
                 </Button>
               </div>
+
+              {!isUserInfoValid && (
+                <p className="text-center text-[11px] text-slate-400 mt-1">
+                  Please fill out all required fields with a valid birthdate (today or earlier) and 10 to 11 digit phone numbers
+                </p>
+              )}
             </form>
           </div>
         )}
@@ -1023,12 +1144,19 @@ export const UnifiedAppFlow: React.FC = () => {
                   type="submit"
                   variant="primary"
                   size="lg"
+                  disabled={!isRequestInfoValid}
                   rightIcon={<ChevronRight className="w-4 h-4" />}
                   className="w-full sm:w-auto justify-center"
                 >
                   Next: Review & Submit
                 </Button>
               </div>
+
+              {!isRequestInfoValid && (
+                <p className="text-center text-[11px] text-slate-400 mt-1">
+                  Please select an option for all required fields to continue
+                </p>
+              )}
             </form>
           </div>
         )}
